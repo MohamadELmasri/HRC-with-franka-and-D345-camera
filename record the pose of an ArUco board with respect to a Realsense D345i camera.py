@@ -1,7 +1,3 @@
-import cv2
-import cv2.aruco as aruco
-import numpy as np
-import pyrealsense2 as rs
 
 '''
 In this code:
@@ -23,17 +19,30 @@ Please note that accurate camera calibration is crucial for the pose estimation 
 The calibration process involves capturing images of a known pattern (like a checkerboard) from different angles 
 and using them to compute the camera parameters. OpenCV provides functions such as cv2.calibrateCamera for this purpose. If you haven’t done this yet, you should calibrate your camera before attempting to estimate the pose of the ArUco board.
 '''
+import cv2
+import cv2.aruco as aruco
+import numpy as np
+import pyrealsense2 as rs
+
 # Initialize the camera
 pipeline = rs.pipeline()
 config = rs.config()
 config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
 pipeline.start(config)
 
 # Load the predefined dictionary
-dictionary = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+dictionary = aruco.getPredefinedDictionary(aruco.DICT_5X5_1000)
 
-# Create parameters to detect markers
+# Create parameters to detect markers with tuned settings
 parameters = aruco.DetectorParameters_create()
+parameters.adaptiveThreshWinSizeMin = 5
+parameters.adaptiveThreshWinSizeMax = 20
+parameters.adaptiveThreshWinSizeStep = 5
+parameters.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
+parameters.cornerRefinementWinSize = 3
+parameters.cornerRefinementMinAccuracy = 0.01
+parameters.cornerRefinementMaxIterations = 50
 
 # Camera calibration parameters (replace with your actual calibration results)
 camera_matrix = np.array([[fx, 0, cx],
@@ -41,22 +50,30 @@ camera_matrix = np.array([[fx, 0, cx],
                           [0, 0, 1]])
 dist_coeffs = np.array([k1, k2, p1, p2, k3])
 
-# Define the ArUco board parameters (replace with your actual board parameters)
-markerLength = 0.04  # size of the marker's side length (in meters)
-markerSeparation = 0.01  # separation between two consecutive markers in the grid (in meters)
-board = aruco.GridBoard_create(markersX=5, markersY=7, markerLength=markerLength,
-                               markerSeparation=markerSeparation, dictionary=dictionary)
+# Define the ArUco board parameters
+markersX = 3
+markersY = 2
+markerLength = 120  # Marker length in millimeters
+markerSeparation = 10  # Marker separation in millimeters
+board = aruco.GridBoard_create(markersX, markersY, float(markerLength) / 1000,
+                               float(markerSeparation) / 1000, dictionary)
+
+# Align the depth frame to the color frame
+align = rs.align(rs.stream.color)
 
 try:
     while True:
-        # Wait for a coherent pair of frames: color
+        # Wait for a coherent pair of frames: depth and color
         frames = pipeline.wait_for_frames()
-        color_frame = frames.get_color_frame()
-        if not color_frame:
+        aligned_frames = align.process(frames)
+        color_frame = aligned_frames.get_color_frame()
+        depth_frame = aligned_frames.get_depth_frame()
+        if not color_frame or not depth_frame:
             continue
 
         # Convert images to numpy arrays
         color_image = np.asanyarray(color_frame.get_data())
+        depth_image = np.asanyarray(depth_frame.get_data())
 
         # Detect markers
         corners, ids, rejectedImgPoints = aruco.detectMarkers(color_image, dictionary, parameters=parameters)
